@@ -2,7 +2,7 @@ import express, { Request, Response } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import Reminder from '../models/Reminder';
 import sendEmail from '../utils/sendEmail';
-import Habit , {IHabit} from '../models/Habit';
+import Habit from '../models/Habit';
 import User from '../models/User';
 import { ObjectId, Types } from 'mongoose';
 
@@ -12,7 +12,7 @@ const router = express.Router();
 // Send Reminder Emails
 router.post('/send-emails', async (req: Request, res: Response) => {
   try {
-const reminderEmails: { email: string | undefined, habitName: string }[] = [];
+    let reminderEmails: { email: string | undefined, habitName: string }[] = [];
 
 // Fetch all active reminders at once
 const reminders = await Reminder.find({ isActive: true });
@@ -33,6 +33,8 @@ const habitIdsObjectIds = habitIds.map(id => Types.ObjectId.createFromHexString(
 // Fetch habits from the database using the $in operator
 const habits: Habit[] = await Habit.find({ _id: { $in: habitIdsObjectIds } });
 
+if(!habits)
+  throw new Error;
 
 const userDetails = await Promise.all(
  [ ...new Set( habits.map(async (habit) => {
@@ -44,10 +46,20 @@ const userDetails = await Promise.all(
   }))
 ]);
 
-for (const userDetail of userDetails) {
-    const mail = userDetail.email
-    reminderEmails.push({ email : mail , habitName : userDetail.name });
-  };
+const groupedHabitNames = userDetails.reduce((acc, { name , email }) => {
+  if (!acc[email!]) {
+    acc[email!] = [];
+  }
+  acc[email!].push(name);
+  return acc;
+}, {} as Record<string, string[]>);
+
+// Create the final array with concatenated habit names
+reminderEmails = Object.entries(groupedHabitNames).map(([email, habitNames]) => ({
+  email,
+  habitName: habitNames.join(', '), // Concatenate habit names
+}));
+
 
 // Send all emails in one batch
 for (const { email, habitName } of reminderEmails) {
