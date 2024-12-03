@@ -2,6 +2,9 @@ import express, { Request, Response } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import Reminder from '../models/Reminder';
 import sendEmail from '../utils/sendEmail';
+import Habit , {IHabit} from '../models/Habit';
+import User from '../models/User';
+import { ObjectId, Types } from 'mongoose';
 
 const router = express.Router();
 
@@ -9,18 +12,53 @@ const router = express.Router();
 // Send Reminder Emails
 router.post('/send-emails', async (req: Request, res: Response) => {
   try {
-    const reminders = await Reminder.find({ isActive: true });
+const reminderEmails: { email: string | undefined, habitName: string }[] = [];
 
-   // for (const reminder of reminders) {
-      // Logic to fetch user's email and habit name
-      // For simplicity, dummy email logic is used here
-      const email = 'writetoadarshsoni@gmail.com'; // Replace with dynamic logic
-      const habitName = 'Exercise'; // Replace with dynamic logic
+// Fetch all active reminders at once
+const reminders = await Reminder.find({ isActive: true });
 
-      await sendEmail(email, 'Habit Reminder', `It's time to work on: ${habitName}`);
-   // }
+// Fetch all habits related to those reminders in one query (we're assuming habits have _id as references in reminders)
+const habitIds = [
+  ...new Set(reminders.map(reminder => JSON.stringify(reminder.habitId)))
+].map(id => JSON.parse(id));
 
-    res.status(200).json({ message: 'Reminders sent' });
+interface Habit {
+  _id: ObjectId; // or ObjectId if using MongoDB
+  name: string;
+  userId: string;
+}
+
+const habitIdsObjectIds = habitIds.map(id => Types.ObjectId.createFromHexString(id));
+
+// Fetch habits from the database using the $in operator
+const habits: Habit[] = await Habit.find({ _id: { $in: habitIdsObjectIds } });
+
+
+const userDetails = await Promise.all(
+ [ ...new Set( habits.map(async (habit) => {
+    const user = await User.findOne({ _id: habit.userId });
+    return {
+      name: habit.name,
+      email: user?.email, // Awaited here to get the actual email value
+    };
+  }))
+]);
+
+for (const userDetail of userDetails) {
+    const mail = userDetail.email
+    reminderEmails.push({ email : mail , habitName : userDetail.name });
+  };
+
+// Send all emails in one batch
+for (const { email, habitName } of reminderEmails) {
+  await sendEmail(email, 'Habit Reminder', `It's time to work on: ${habitName}`);
+}
+
+    //res.status(200).json({ message: 'Reminders sent' });
+
+    res.status(200).json({ message : "Mail Sent Successfully"})
+    console.log(habitIdsObjectIds); // Ensure this contains valid ObjectId strings
+
   } catch (error) {
     res.status(500).json({ message: 'Server error', error });
   }
